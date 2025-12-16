@@ -1,0 +1,52 @@
+/*
+ * Copyright (c) 2023 Nordic Semiconductor ASA
+ *
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	chosen {
+		ncs,zigbee-timer = &timer2;
+	};
+
+	/* Relay control output on P0.03 */
+	relays {
+		compatible = "gpio-leds";
+		status = "okay";
+		relay0: relay_0 {
+			gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;
+			label = "Relay control";
+		};
+	};
+
+	aliases {
+		relay0 = &relay0;
+	};
+
+	/* Voltage sensor ADC channel on P0.04 (AIN2) */
+	zephyr,user {
+		io-channels = <&adc 2>;
+	};
+};
+
+&timer2 {
+	status = "okay";
+};
+
+&adc {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	/* P0.04 = AIN2, configured for 0-3.3V range */
+	channel@2 {
+		reg = <2>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,input-positive = <NRF_SAADC_AIN2>;
+		zephyr,resolution = <12>;
+	};
+};

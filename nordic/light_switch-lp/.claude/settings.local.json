@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:developer.nordicsemi.com)",
+      "WebFetch(domain:docs.nordicsemi.com)",
+      "WebSearch",
+      "Bash(tree:*)",
+      "Bash(west build:*)"
+    ]
+  }
+}

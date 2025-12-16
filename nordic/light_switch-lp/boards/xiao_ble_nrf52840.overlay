@@ -1,0 +1,85 @@
+/*
+ * Board overlay for Seeed XIAO BLE nRF52840
+ *
+ * Button on D1 (P0.03) wired to GND
+ * LEDs already defined by board: led0=Red(P0.26), led1=Green(P0.30), led2=Blue(P0.06)
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	buttons {
+		compatible = "gpio-keys";
+
+		button0: button_0 {
+			gpios = <&gpio0 3 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			label = "Main button";
+		};
+	};
+
+	aliases {
+		sw0 = &button0;
+	};
+
+	/* Voltage sensor ADC channel on P0.04 (AIN2) */
+	zephyr,user {
+		io-channels = <&adc 2>;
+	};
+};
+
+/* Enable DC-DC converter for better power efficiency */
+&reg1 {
+	regulator-initial-mode = <2>; /* NRF5X_REG_MODE_DCDC */
+};
+
+/* =============================================================================
+ * DISABLE UNUSED PERIPHERALS FOR LOW POWER
+ * =============================================================================
+ */
+
+/* Disable USB peripheral completely - major power drain */
+&usbd {
+	status = "disabled";
+};
+
+/* Disable UART - not needed for low power operation */
+&uart0 {
+	status = "disabled";
+};
+
+/* Disable I2C */
+&i2c1 {
+	status = "disabled";
+};
+
+/* Disable SPI */
+&spi2 {
+	status = "disabled";
+};
+
+/* Disable PWM */
+&pwm0 {
+	status = "disabled";
+};
+
+/* Disable USB voltage regulator */
+&reg0 {
+	status = "disabled";
+};
+
+/* Enable ADC for voltage sensing */
+&adc {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	/* P0.04 = AIN2, configured for 0-3.3V range */
+	channel@2 {
+		reg = <2>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,input-positive = <NRF_SAADC_AIN2>;
+		zephyr,resolution = <12>;
+	};
+};

@@ -1,0 +1,139 @@
+/*
+ * Copyright (c) 2020 Nordic Semiconductor ASA
+ *
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/*
+ * Custom button configuration for Pro Micro nRF52840
+ * Single button wired between GPIO 0.02 (pin marked "002") and GND
+ * LED wired to GPIO 0.06 (pin marked "006") - change if using different pin
+ *
+ * Button behaviors:
+ * - Press & release: Toggle local LED ON/OFF
+ * - Hold during boot: Enable sleepy (low power) mode
+ * - Hold >5 seconds: Factory reset
+ */
+
+ / {
+	buttons {
+		compatible = "gpio-keys";
+
+		/* Physical button on GPIO 0.02 */
+		button0: button_0 {
+			gpios = <&gpio0 2 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			label = "Main button";
+		};
+
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		/* Main LED controlled by button and Zigbee - change GPIO pin as needed */
+		led0: led_0 {
+			gpios = <&gpio0 15 GPIO_ACTIVE_HIGH>;
+			label = "Main control LED";
+		};
+
+		/* Network state LED - use separate pin or disable for low power */
+		led1: led_1 {
+			gpios = <&gpio0 13 GPIO_ACTIVE_HIGH>;
+			label = "Power LED";
+		};
+
+		/* Relay control output on P0.08 (SRD-05VDC-SL-C relay) */
+		relay0: relay_0 {
+			gpios = <&gpio0 8 GPIO_ACTIVE_HIGH>;
+			label = "Relay control";
+		};
+	};
+
+	aliases {
+		sw0 = &button0;
+		led0 = &led0;
+		led1 = &led1;
+		relay0 = &relay0;
+	};
+
+	/* Voltage sensor ADC channel on P0.04 (AIN2) */
+	zephyr,user {
+		io-channels = <&adc 2>;
+	};
+};
+
+/* =============================================================================
+ * DISABLE UNUSED PERIPHERALS FOR LOW POWER
+ * =============================================================================
+ */
+
+/* Enable DC-DC converter for better power efficiency */
+&reg1 {
+	regulator-initial-mode = <2>; /* NRF5X_REG_MODE_DCDC */
+};
+
+/* Disable USB peripheral completely */
+&usbd {
+	status = "disabled";
+};
+
+/* Disable USB voltage regulator */
+&reg0 {
+	status = "disabled";
+};
+
+/* Disable UART */
+&uart0 {
+	status = "disabled";
+};
+
+/* Disable I2C */
+&i2c0 {
+	status = "disabled";
+};
+
+&i2c1 {
+	status = "disabled";
+};
+
+/* Disable SPI */
+&spi0 {
+	status = "disabled";
+};
+
+&spi1 {
+	status = "disabled";
+};
+
+&spi2 {
+	status = "disabled";
+};
+
+/* Disable PWM */
+&pwm0 {
+	status = "disabled";
+};
+
+/* Enable ADC for voltage sensing */
+&adc {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	/* P0.04 = AIN2, configured for 0-3.3V range */
+	channel@2 {
+		reg = <2>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,input-positive = <NRF_SAADC_AIN2>;
+		zephyr,resolution = <12>;
+	};
+};
+
+/* Disable QSPI if present */
+&qspi {
+	status = "disabled";
+};
