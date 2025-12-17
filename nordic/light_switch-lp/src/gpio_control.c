@@ -22,7 +22,7 @@
 
 LOG_MODULE_REGISTER(gpio_control, LOG_LEVEL_INF);
 
-/* Relay GPIO - only if relay0 alias exists in devicetree */
+/* Relay GPIO on P0.29 - only if relay0 alias exists in devicetree */
 #if DT_NODE_EXISTS(DT_ALIAS(relay0))
 #define HAS_RELAY 1
 static const struct gpio_dt_spec relay_ctrl = GPIO_DT_SPEC_GET(DT_ALIAS(relay0), gpios);
@@ -32,7 +32,6 @@ static const struct gpio_dt_spec relay_ctrl = GPIO_DT_SPEC_GET(DT_ALIAS(relay0),
 
 #ifndef CONFIG_DK_LIBRARY
 /* Custom GPIO specs when DK library is not used */
-static const struct gpio_dt_spec led_control = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec led_power = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 static const struct gpio_dt_spec button_main = GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios);
 #endif
@@ -42,17 +41,6 @@ int gpio_control_init(void)
 	int err;
 
 #ifndef CONFIG_DK_LIBRARY
-	/* Configure control LED */
-	if (!gpio_is_ready_dt(&led_control)) {
-		LOG_ERR("Control LED GPIO not ready");
-		return -ENODEV;
-	}
-	err = gpio_pin_configure_dt(&led_control, GPIO_OUTPUT_INACTIVE);
-	if (err) {
-		LOG_ERR("Failed to configure control LED: %d", err);
-		return err;
-	}
-
 	/* Configure power LED */
 	if (!gpio_is_ready_dt(&led_power)) {
 		LOG_ERR("Power LED GPIO not ready");
@@ -76,7 +64,7 @@ int gpio_control_init(void)
 	}
 #endif
 
-	/* Configure relay output (only if defined in devicetree) */
+	/* Configure relay output on P0.29 (only if defined in devicetree) */
 #if HAS_RELAY
 	if (!gpio_is_ready_dt(&relay_ctrl)) {
 		LOG_ERR("Relay GPIO not ready");
@@ -87,7 +75,7 @@ int gpio_control_init(void)
 		LOG_ERR("Failed to configure relay: %d", err);
 		return err;
 	}
-	LOG_INF("GPIO initialized with relay on P%d.%02d",
+	LOG_INF("Relay GPIO initialized on P%d.%02d",
 		relay_ctrl.port == DEVICE_DT_GET(DT_NODELABEL(gpio0)) ? 0 : 1,
 		relay_ctrl.pin);
 #else
@@ -95,15 +83,6 @@ int gpio_control_init(void)
 #endif
 
 	return 0;
-}
-
-void led_control_set(bool on)
-{
-#ifdef CONFIG_DK_LIBRARY
-	dk_set_led(DK_LED1, on ? 1 : 0);
-#else
-	gpio_pin_set_dt(&led_control, on ? 1 : 0);
-#endif
 }
 
 void led_power_set(bool on)

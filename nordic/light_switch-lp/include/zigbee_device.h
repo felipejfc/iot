@@ -15,9 +15,8 @@
 #include <zboss_api.h>
 
 /* Source endpoint for Zigbee device */
-#define LIGHT_SWITCH_ENDPOINT      1
-#define RELAY_SWITCH_ENDPOINT      2
-#define VOLTAGE_SENSOR_ENDPOINT    3
+#define RELAY_SWITCH_ENDPOINT      1
+#define VOLTAGE_SENSOR_ENDPOINT    2
 
 /* Do not erase NVRAM to save the network parameters after device reboot or
  * power-off. NOTE: If this option is set to ZB_TRUE then do full device erase
@@ -38,27 +37,6 @@ void zigbee_device_init(void);
  * Registers the device context, ZCL callback, and identify handlers.
  */
 void zigbee_device_register(void);
-
-/**
- * @brief Set LED state and update Zigbee On/Off attribute
- *
- * @param on true to turn LED on, false to turn off
- */
-void zigbee_device_set_led(bool on);
-
-/**
- * @brief Toggle LED state and update Zigbee On/Off attribute
- *
- * @return New LED state after toggle
- */
-bool zigbee_device_toggle_led(void);
-
-/**
- * @brief Get current LED state
- *
- * @return true if LED is on, false otherwise
- */
-bool zigbee_device_get_led_state(void);
 
 /**
  * @brief Set relay state and update Zigbee On/Off attribute

@@ -15,20 +15,14 @@
 #include <stdbool.h>
 
 /**
- * @brief Initialize all GPIO pins (LEDs and button)
+ * @brief Initialize all GPIO pins (relay, MOSFET, LEDs, and button)
  *
- * Configures LED outputs and button input. Does not setup button interrupt.
+ * Configures relay and MOSFET outputs, power LED, and button input.
+ * Does not setup button interrupt.
  *
  * @return 0 on success, negative error code on failure
  */
 int gpio_control_init(void);
-
-/**
- * @brief Set the main control LED state
- *
- * @param on true to turn LED on, false to turn off
- */
-void led_control_set(bool on);
 
 /**
  * @brief Set the power/status LED state
@@ -39,6 +33,8 @@ void led_power_set(bool on);
 
 /**
  * @brief Set the relay state
+ *
+ * Controls the relay output on P0.29 (active high).
  *
  * @param on true to turn relay on, false to turn off
  */

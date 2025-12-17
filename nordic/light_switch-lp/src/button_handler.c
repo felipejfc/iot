@@ -144,8 +144,8 @@ static void short_press_work_handler(struct k_work *work)
 	/* Inform Zigbee stack about user input */
 	user_input_indicate();
 
-	/* Toggle LED */
-	zigbee_device_toggle_led();
+	/* Toggle relay */
+	zigbee_device_toggle_relay();
 
 	/* Notify user callback */
 	if (user_callback) {

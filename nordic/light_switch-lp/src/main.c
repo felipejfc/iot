@@ -66,13 +66,12 @@ static void factory_reset_timer_handler(struct k_timer *timer)
 /**
  * @brief DK button handler callback
  *
- * Button 1 (sw0): Toggle LED (endpoint 1)
- * Button 2 (sw1): Toggle Relay (endpoint 2)
+ * Button 1 (sw0): Toggle Relay (endpoint 1)
  * Long press Button 1: Factory reset
  */
 static void dk_button_handler(uint32_t button_state, uint32_t has_changed)
 {
-	/* Button 1 pressed - LED control */
+	/* Button 1 pressed - Relay control */
 	if (has_changed & DK_BTN1_MSK) {
 		if (button_state & DK_BTN1_MSK) {
 			/* Button pressed - start factory reset timer */
@@ -82,20 +81,11 @@ static void dk_button_handler(uint32_t button_state, uint32_t has_changed)
 			/* Button released */
 			k_timer_stop(&factory_reset_timer);
 			if (!factory_reset_pending) {
-				/* Short press - toggle LED */
+				/* Short press - toggle relay */
 				user_input_indicate();
-				zigbee_device_toggle_led();
+				zigbee_device_toggle_relay();
 			}
 			factory_reset_pending = false;
-		}
-	}
-
-	/* Button 2 pressed - Relay control */
-	if (has_changed & DK_BTN2_MSK) {
-		if (!(button_state & DK_BTN2_MSK)) {
-			/* Button released - toggle relay */
-			user_input_indicate();
-			zigbee_device_toggle_relay();
 		}
 	}
 }
@@ -204,8 +194,7 @@ int main(void)
 	/* Start Zigbee stack */
 	zigbee_enable();
 
-	LOG_INF("Zigbee LED Controller started - LED is %s, Relay is %s",
-		zigbee_device_get_led_state() ? "ON" : "OFF",
+	LOG_INF("Zigbee Relay Controller started - Relay is %s",
 		zigbee_device_get_relay_state() ? "ON" : "OFF");
 
 	/* Initialize ADC for voltage sensing */

@@ -17,7 +17,6 @@
 #include <zigbee/zigbee_app_utils.h>
 #include <zigbee/zigbee_error_handler.h>
 
-#include "zb_dimmer_switch.h"
 #include "zigbee_device.h"
 #include "zigbee_handlers.h"
 #include "gpio_control.h"
@@ -28,22 +27,9 @@
 
 LOG_MODULE_REGISTER(zigbee_device, LOG_LEVEL_INF);
 
-/* LED context */
-struct led_context {
-	bool led_state;  /* Current LED state: true = ON, false = OFF */
-};
-
 /* Relay context */
 struct relay_context {
 	bool relay_state;  /* Current relay state: true = ON, false = OFF */
-};
-
-struct zb_device_ctx {
-	zb_zcl_basic_attrs_t basic_attr;
-	zb_zcl_identify_attrs_t identify_attr;
-	zb_zcl_on_off_attrs_t on_off_attr;
-	zb_char_t manufacturer_name[17];
-	zb_char_t model_id[17];
 };
 
 /* Relay endpoint device context (simpler - just On/Off server) */
@@ -71,156 +57,13 @@ static zb_uint8_t voltage_status_flags;        /* Status flags */
 /* Minimum voltage change (in centivolts) required to trigger a report */
 #define VOLTAGE_REPORT_THRESHOLD_CV  5  /* 50mV = 5 centivolts */
 
-static struct led_context led_ctx;
 static struct relay_context relay_ctx;
-static struct zb_device_ctx dev_ctx;
 static struct zb_relay_ctx relay_dev_ctx;
 static struct zb_voltage_ctx voltage_dev_ctx;
 
 /* Forward declaration */
 static void zcl_device_cb(zb_bufid_t bufid);
 static zb_uint8_t zcl_on_off_handler(zb_bufid_t bufid);
-
-/* Declare attribute list for Basic cluster (server) with manufacturer info. */
-#define ZB_ZCL_BASIC_MANUF_SPECIFIC_ATTRIB_LIST                                 \
-	ZB_ZCL_START_DECLARE_ATTRIB_LIST_CLUSTER_REVISION(basic_server_attr_list, ZB_ZCL_BASIC) \
-	ZB_ZCL_SET_ATTR_DESC(ZB_ZCL_ATTR_BASIC_ZCL_VERSION_ID, (&dev_ctx.basic_attr.zcl_version)) \
-	ZB_ZCL_SET_ATTR_DESC(ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, (dev_ctx.manufacturer_name)) \
-	ZB_ZCL_SET_ATTR_DESC(ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, (dev_ctx.model_id)) \
-	ZB_ZCL_SET_ATTR_DESC(ZB_ZCL_ATTR_BASIC_POWER_SOURCE_ID, (&dev_ctx.basic_attr.power_source)) \
-	ZB_ZCL_FINISH_DECLARE_ATTRIB_LIST
-
-ZB_ZCL_BASIC_MANUF_SPECIFIC_ATTRIB_LIST;
-
-/* Declare attribute list for Identify cluster (client). */
-ZB_ZCL_DECLARE_IDENTIFY_CLIENT_ATTRIB_LIST(
-	identify_client_attr_list);
-
-/* Declare attribute list for Identify cluster (server). */
-ZB_ZCL_DECLARE_IDENTIFY_SERVER_ATTRIB_LIST(
-	identify_server_attr_list,
-	&dev_ctx.identify_attr.identify_time);
-
-/* Declare attribute list for Scenes cluster (client). */
-ZB_ZCL_DECLARE_SCENES_CLIENT_ATTRIB_LIST(
-	scenes_client_attr_list);
-
-/* Declare attribute list for Groups cluster (client). */
-ZB_ZCL_DECLARE_GROUPS_CLIENT_ATTRIB_LIST(
-	groups_client_attr_list);
-
-/* Declare attribute list for On/Off cluster (client). */
-ZB_ZCL_DECLARE_ON_OFF_CLIENT_ATTRIB_LIST(
-	on_off_client_attr_list);
-
-/* Declare attribute list for On/Off cluster (server) - to receive commands */
-ZB_ZCL_DECLARE_ON_OFF_ATTRIB_LIST(
-	on_off_server_attr_list,
-	&dev_ctx.on_off_attr.on_off);
-
-/* Declare attribute list for Level control cluster (client). */
-ZB_ZCL_DECLARE_LEVEL_CONTROL_CLIENT_ATTRIB_LIST(
-	level_control_client_attr_list);
-
-/* Declare cluster list for Dimmer Switch device with On/Off server. */
-zb_zcl_cluster_desc_t dimmer_switch_clusters[] =
-{
-	ZB_ZCL_CLUSTER_DESC(
-		ZB_ZCL_CLUSTER_ID_BASIC,
-		ZB_ZCL_ARRAY_SIZE(basic_server_attr_list, zb_zcl_attr_t),
-		(basic_server_attr_list),
-		ZB_ZCL_CLUSTER_SERVER_ROLE,
-		ZB_ZCL_MANUF_CODE_INVALID
-	),
-	ZB_ZCL_CLUSTER_DESC(
-		ZB_ZCL_CLUSTER_ID_IDENTIFY,
-		ZB_ZCL_ARRAY_SIZE(identify_server_attr_list, zb_zcl_attr_t),
-		(identify_server_attr_list),
-		ZB_ZCL_CLUSTER_SERVER_ROLE,
-		ZB_ZCL_MANUF_CODE_INVALID
-	),
-	ZB_ZCL_CLUSTER_DESC(
-		ZB_ZCL_CLUSTER_ID_IDENTIFY,
-		ZB_ZCL_ARRAY_SIZE(identify_client_attr_list, zb_zcl_attr_t),
-		(identify_client_attr_list),
-		ZB_ZCL_CLUSTER_CLIENT_ROLE,
-		ZB_ZCL_MANUF_CODE_INVALID
-	),
-	ZB_ZCL_CLUSTER_DESC(
-		ZB_ZCL_CLUSTER_ID_ON_OFF,
-		ZB_ZCL_ARRAY_SIZE(on_off_server_attr_list, zb_zcl_attr_t),
-		(on_off_server_attr_list),
-		ZB_ZCL_CLUSTER_SERVER_ROLE,
-		ZB_ZCL_MANUF_CODE_INVALID
-	),
-	ZB_ZCL_CLUSTER_DESC(
-		ZB_ZCL_CLUSTER_ID_SCENES,
-		ZB_ZCL_ARRAY_SIZE(scenes_client_attr_list, zb_zcl_attr_t),
-		(scenes_client_attr_list),
-		ZB_ZCL_CLUSTER_CLIENT_ROLE,
-		ZB_ZCL_MANUF_CODE_INVALID
-	),
-	ZB_ZCL_CLUSTER_DESC(
-		ZB_ZCL_CLUSTER_ID_GROUPS,
-		ZB_ZCL_ARRAY_SIZE(groups_client_attr_list, zb_zcl_attr_t),
-		(groups_client_attr_list),
-		ZB_ZCL_CLUSTER_CLIENT_ROLE,
-		ZB_ZCL_MANUF_CODE_INVALID
-	),
-	ZB_ZCL_CLUSTER_DESC(
-		ZB_ZCL_CLUSTER_ID_ON_OFF,
-		ZB_ZCL_ARRAY_SIZE(on_off_client_attr_list, zb_zcl_attr_t),
-		(on_off_client_attr_list),
-		ZB_ZCL_CLUSTER_CLIENT_ROLE,
-		ZB_ZCL_MANUF_CODE_INVALID
-	),
-	ZB_ZCL_CLUSTER_DESC(
-		ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL,
-		ZB_ZCL_ARRAY_SIZE(level_control_client_attr_list, zb_zcl_attr_t),
-		(level_control_client_attr_list),
-		ZB_ZCL_CLUSTER_CLIENT_ROLE,
-		ZB_ZCL_MANUF_CODE_INVALID
-	)
-};
-
-/* Declare custom simple descriptor with 3 server clusters (Basic, Identify, On/Off)
- * and 5 client clusters (Identify, Scenes, Groups, On/Off, Level Control)
- */
-ZB_DECLARE_SIMPLE_DESC(3, 5);
-
-ZB_AF_SIMPLE_DESC_TYPE(3, 5) simple_desc_dimmer_switch_ep = {
-	LIGHT_SWITCH_ENDPOINT,                /* Endpoint ID */
-	ZB_AF_HA_PROFILE_ID,                  /* Application profile identifier */
-	ZB_DIMMER_SWITCH_DEVICE_ID,           /* Device ID */
-	ZB_DEVICE_VER_DIMMER_SWITCH,          /* Device version */
-	0,                                     /* Reserved */
-	3,                                     /* Number of input (server) clusters */
-	5,                                     /* Number of output (client) clusters */
-	{
-		ZB_ZCL_CLUSTER_ID_BASIC,           /* Server: Basic */
-		ZB_ZCL_CLUSTER_ID_IDENTIFY,        /* Server: Identify */
-		ZB_ZCL_CLUSTER_ID_ON_OFF,          /* Server: On/Off */
-		ZB_ZCL_CLUSTER_ID_IDENTIFY,        /* Client: Identify */
-		ZB_ZCL_CLUSTER_ID_SCENES,          /* Client: Scenes */
-		ZB_ZCL_CLUSTER_ID_GROUPS,          /* Client: Groups */
-		ZB_ZCL_CLUSTER_ID_ON_OFF,          /* Client: On/Off */
-		ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL,   /* Client: Level Control */
-	}
-};
-
-/* Declare endpoint descriptor */
-ZB_AF_DECLARE_ENDPOINT_DESC(
-	dimmer_switch_ep,
-	LIGHT_SWITCH_ENDPOINT,
-	ZB_AF_HA_PROFILE_ID,
-	0,
-	NULL,
-	ZB_ZCL_ARRAY_SIZE(dimmer_switch_clusters, zb_zcl_cluster_desc_t),
-	dimmer_switch_clusters,
-	(zb_af_simple_desc_1_1_t *)&simple_desc_dimmer_switch_ep,
-	0, NULL, /* No reporting ctx */
-	0, NULL  /* No CVC ctx */
-);
 
 /* =============================================================================
  * RELAY ENDPOINT (EP 2) - On/Off Switch device type
@@ -408,11 +251,8 @@ ZB_AF_DECLARE_ENDPOINT_DESC(
 
 /* Declare application's device context (list of registered endpoints) */
 #ifndef CONFIG_ZIGBEE_FOTA
-ZBOSS_DECLARE_DEVICE_CTX_3_EP(dimmer_switch_ctx, dimmer_switch_ep, relay_switch_ep, voltage_sensor_ep);
+ZBOSS_DECLARE_DEVICE_CTX_2_EP(device_ctx, relay_switch_ep, voltage_sensor_ep);
 #else
-  #if LIGHT_SWITCH_ENDPOINT == CONFIG_ZIGBEE_FOTA_ENDPOINT
-    #error "Light switch and Zigbee OTA endpoints should be different."
-  #endif
   #if RELAY_SWITCH_ENDPOINT == CONFIG_ZIGBEE_FOTA_ENDPOINT
     #error "Relay switch and Zigbee OTA endpoints should be different."
   #endif
@@ -421,9 +261,8 @@ ZBOSS_DECLARE_DEVICE_CTX_3_EP(dimmer_switch_ctx, dimmer_switch_ep, relay_switch_
   #endif
 
 extern zb_af_endpoint_desc_t zigbee_fota_client_ep;
-ZBOSS_DECLARE_DEVICE_CTX_4_EP(dimmer_switch_ctx,
+ZBOSS_DECLARE_DEVICE_CTX_3_EP(device_ctx,
 			      zigbee_fota_client_ep,
-			      dimmer_switch_ep,
 			      relay_switch_ep,
 			      voltage_sensor_ep);
 #endif /* CONFIG_ZIGBEE_FOTA */
@@ -442,11 +281,7 @@ static zb_uint8_t zcl_on_off_handler(zb_bufid_t bufid)
 		    device_cb_param->cb_param.set_attr_value_param.attr_id == ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID) {
 			zb_bool_t new_value = device_cb_param->cb_param.set_attr_value_param.values.data8;
 
-			if (device_cb_param->endpoint == LIGHT_SWITCH_ENDPOINT) {
-				LOG_INF("Zigbee On/Off command for LED: %s", new_value ? "ON" : "OFF");
-				led_ctx.led_state = (new_value == ZB_TRUE);
-				led_control_set(led_ctx.led_state);
-			} else if (device_cb_param->endpoint == RELAY_SWITCH_ENDPOINT) {
+			if (device_cb_param->endpoint == RELAY_SWITCH_ENDPOINT) {
 				LOG_INF("Zigbee On/Off command for Relay: %s", new_value ? "ON" : "OFF");
 				relay_ctx.relay_state = (new_value == ZB_TRUE);
 				relay_control_set(relay_ctx.relay_state);
@@ -495,32 +330,9 @@ static void zcl_device_cb(zb_bufid_t bufid)
 
 void zigbee_device_init(void)
 {
-	/* Initialize LED state - start with LED OFF */
-	led_ctx.led_state = false;
-	led_control_set(led_ctx.led_state);
-
 	/* Initialize relay state - start with relay OFF */
 	relay_ctx.relay_state = false;
 	relay_control_set(relay_ctx.relay_state);
-
-	/* Basic cluster attributes data for LED endpoint */
-	dev_ctx.basic_attr.zcl_version = ZB_ZCL_VERSION;
-	dev_ctx.basic_attr.power_source = ZB_ZCL_BASIC_POWER_SOURCE_UNKNOWN;
-
-	/* Set manufacturer name and model identifier with Zigbee string format (length + data). */
-	ZB_ZCL_SET_STRING_VAL(dev_ctx.manufacturer_name,
-			      (zb_uint8_t *)"Nordic",
-			      ZB_ZCL_STRING_CONST_SIZE("Nordic"));
-
-	ZB_ZCL_SET_STRING_VAL(dev_ctx.model_id,
-			      (zb_uint8_t *)"Cava test dev",
-			      ZB_ZCL_STRING_CONST_SIZE("Cava test dev"));
-
-	/* On/Off cluster attributes - sync with LED state. */
-	dev_ctx.on_off_attr.on_off = led_ctx.led_state ? ZB_TRUE : ZB_FALSE;
-
-	/* Identify cluster attributes data. */
-	dev_ctx.identify_attr.identify_time = ZB_ZCL_IDENTIFY_IDENTIFY_TIME_DEFAULT_VALUE;
 
 	/* Basic cluster attributes data for relay endpoint */
 	relay_dev_ctx.basic_attr.zcl_version = ZB_ZCL_VERSION;
@@ -591,50 +403,17 @@ void zigbee_device_register(void)
 	ZB_ZCL_REGISTER_DEVICE_CB(zcl_device_cb);
 
 	/* Register device context (endpoints) */
-	ZB_AF_REGISTER_DEVICE_CTX(&dimmer_switch_ctx);
+	ZB_AF_REGISTER_DEVICE_CTX(&device_ctx);
 
-	LOG_INF("Registered Zigbee endpoints: EP%d (LED), EP%d (Relay), EP%d (Voltage)",
-		LIGHT_SWITCH_ENDPOINT, RELAY_SWITCH_ENDPOINT, VOLTAGE_SENSOR_ENDPOINT);
+	LOG_INF("Registered Zigbee endpoints: EP%d (Relay), EP%d (Voltage)",
+		RELAY_SWITCH_ENDPOINT, VOLTAGE_SENSOR_ENDPOINT);
 
 	/* Register handlers to identify notifications */
-	ZB_AF_SET_IDENTIFY_NOTIFICATION_HANDLER(LIGHT_SWITCH_ENDPOINT, identify_cb);
 	ZB_AF_SET_IDENTIFY_NOTIFICATION_HANDLER(RELAY_SWITCH_ENDPOINT, identify_cb);
 	ZB_AF_SET_IDENTIFY_NOTIFICATION_HANDLER(VOLTAGE_SENSOR_ENDPOINT, identify_cb);
 #ifdef CONFIG_ZIGBEE_FOTA
 	ZB_AF_SET_IDENTIFY_NOTIFICATION_HANDLER(CONFIG_ZIGBEE_FOTA_ENDPOINT, identify_cb);
 #endif
-}
-
-void zigbee_device_set_led(bool on)
-{
-	led_ctx.led_state = on;
-	led_control_set(led_ctx.led_state);
-
-	/* Update Zigbee On/Off attribute */
-	zb_uint8_t new_value = on ? ZB_TRUE : ZB_FALSE;
-	zb_zcl_status_t status = zb_zcl_set_attr_val(
-		LIGHT_SWITCH_ENDPOINT,
-		ZB_ZCL_CLUSTER_ID_ON_OFF,
-		ZB_ZCL_CLUSTER_SERVER_ROLE,
-		ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
-		&new_value,
-		ZB_FALSE);
-
-	if (status != ZB_ZCL_STATUS_SUCCESS) {
-		LOG_ERR("Failed to update On/Off attribute: %d", status);
-	}
-}
-
-bool zigbee_device_toggle_led(void)
-{
-	zigbee_device_set_led(!led_ctx.led_state);
-	LOG_INF("LED toggled to %s", led_ctx.led_state ? "ON" : "OFF");
-	return led_ctx.led_state;
-}
-
-bool zigbee_device_get_led_state(void)
-{
-	return led_ctx.led_state;
 }
 
 void zigbee_device_set_relay(bool on)
