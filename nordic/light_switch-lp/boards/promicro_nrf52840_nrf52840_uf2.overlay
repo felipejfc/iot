@@ -28,28 +28,31 @@
 	leds {
 		compatible = "gpio-leds";
 
-		/* Power/status LED */
-		led1: led_1 {
-			gpios = <&gpio0 13 GPIO_ACTIVE_HIGH>;
-			label = "Power LED";
-		};
-
-		/* Relay/MOSFET control output on P0.29 (active high) */
+		/* Relay/MOSFET control output on P0.17 (active high) */
 		relay0: relay_0 {
-			gpios = <&gpio0 29 GPIO_ACTIVE_HIGH>;
+			gpios = <&gpio0 17 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>;
 			label = "Relay control";
+		};
+	};
+
+	/* VCC power control - P0.13 LOW = VCC off, HIGH = VCC on */
+	vcc_ctrl: vcc_control {
+		compatible = "gpio-leds";
+		vcc_pin: vcc {
+			gpios = <&gpio0 13 GPIO_ACTIVE_HIGH>;
+			label = "VCC control";
 		};
 	};
 
 	aliases {
 		sw0 = &button0;
-		led1 = &led1;
 		relay0 = &relay0;
+		vcc-ctrl = &vcc_pin;
 	};
 
-	/* Voltage sensor ADC channel on P0.04 (AIN2) */
+	/* VDDH voltage sensing via internal divider */
 	zephyr,user {
-		io-channels = <&adc 2>;
+		io-channels = <&adc 7>;
 	};
 };
 
@@ -105,24 +108,57 @@
 	status = "disabled";
 };
 
-/* Enable ADC for voltage sensing */
+/* Enable ADC for VDDH voltage sensing */
 &adc {
 	status = "okay";
 	#address-cells = <1>;
 	#size-cells = <0>;
 
-	/* P0.04 = AIN2, configured for 0-3.3V range */
-	channel@2 {
-		reg = <2>;
+	/* VDDHDIV5 - measures VDDH/5 for supply voltage monitoring */
+	channel@7 {
+		reg = <7>;
 		zephyr,gain = "ADC_GAIN_1_6";
 		zephyr,reference = "ADC_REF_INTERNAL";
 		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
-		zephyr,input-positive = <NRF_SAADC_AIN2>;
+		zephyr,input-positive = <NRF_SAADC_VDDHDIV5>;
 		zephyr,resolution = <12>;
 	};
 };
 
 /* Disable QSPI if present */
 &qspi {
+	status = "disabled";
+};
+
+/* Disable SPI3 */
+&spi3 {
+	status = "disabled";
+};
+
+/* Disable WDT if not needed */
+&wdt0 {
+	status = "disabled";
+};
+
+/* Disable RTC2 (RTC0/1 used by system) */
+&rtc2 {
+	status = "disabled";
+};
+
+/* Disable timer peripherals not needed */
+&timer0 {
+	status = "disabled";
+};
+
+&timer1 {
+	status = "disabled";
+};
+
+&timer2 {
+	status = "disabled";
+};
+
+/* Disable board's default LED0 on P0.15 */
+&led0 {
 	status = "disabled";
 };

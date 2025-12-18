@@ -154,7 +154,7 @@ int main(void)
 	/* Initialize factory reset timer */
 	k_timer_init(&factory_reset_timer, factory_reset_timer_handler, NULL);
 #else
-	/* Turn off power LED to save power */
+	/* Cut VCC off (P0.13 LOW) for low power - external 3.3V rail disabled */
 	led_power_set(false);
 
 	/* Initialize button handler with interrupts and debounce */

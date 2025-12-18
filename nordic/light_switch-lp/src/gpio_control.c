@@ -32,8 +32,15 @@ static const struct gpio_dt_spec relay_ctrl = GPIO_DT_SPEC_GET(DT_ALIAS(relay0),
 
 #ifndef CONFIG_DK_LIBRARY
 /* Custom GPIO specs when DK library is not used */
-static const struct gpio_dt_spec led_power = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 static const struct gpio_dt_spec button_main = GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios);
+
+/* VCC power control on P0.13 - HIGH = VCC on, LOW = VCC off */
+#if DT_NODE_EXISTS(DT_ALIAS(vcc_ctrl))
+#define HAS_VCC_CTRL 1
+static const struct gpio_dt_spec vcc_ctrl = GPIO_DT_SPEC_GET(DT_ALIAS(vcc_ctrl), gpios);
+#else
+#define HAS_VCC_CTRL 0
+#endif
 #endif
 
 int gpio_control_init(void)
@@ -41,16 +48,20 @@ int gpio_control_init(void)
 	int err;
 
 #ifndef CONFIG_DK_LIBRARY
-	/* Configure power LED */
-	if (!gpio_is_ready_dt(&led_power)) {
-		LOG_ERR("Power LED GPIO not ready");
+	/* Configure VCC control pin (P0.13) - set HIGH to keep VCC on */
+#if HAS_VCC_CTRL
+	if (!gpio_is_ready_dt(&vcc_ctrl)) {
+		LOG_ERR("VCC control GPIO not ready");
 		return -ENODEV;
 	}
-	err = gpio_pin_configure_dt(&led_power, GPIO_OUTPUT_INACTIVE);
+	/* Start with VCC ON (P0.13 HIGH) - set LOW to cut VCC for low power */
+	err = gpio_pin_configure_dt(&vcc_ctrl, GPIO_OUTPUT_ACTIVE);
 	if (err) {
-		LOG_ERR("Failed to configure power LED: %d", err);
+		LOG_ERR("Failed to configure VCC control: %d", err);
 		return err;
 	}
+	LOG_INF("VCC control initialized (P0.13 HIGH = VCC on)");
+#endif
 
 	/* Configure button input (interrupt setup done by button_handler) */
 	if (!gpio_is_ready_dt(&button_main)) {
@@ -90,7 +101,11 @@ void led_power_set(bool on)
 #ifdef CONFIG_DK_LIBRARY
 	dk_set_led(DK_LED2, on ? 1 : 0);
 #else
-	gpio_pin_set_dt(&led_power, on ? 1 : 0);
+	/* On Pro Micro, this controls VCC via P0.13 */
+	/* For low power: call led_power_set(false) to cut VCC */
+#if HAS_VCC_CTRL
+	gpio_pin_set_dt(&vcc_ctrl, on ? 1 : 0);
+#endif
 #endif
 }
 

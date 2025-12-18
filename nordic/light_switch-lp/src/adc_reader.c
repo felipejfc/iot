@@ -12,13 +12,17 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
-#include <zephyr/drivers/adc.h>
 #include <zephyr/logging/log.h>
+#include <errno.h>
 
 #include "adc_reader.h"
 #include "zigbee_device.h"
 
 LOG_MODULE_REGISTER(adc_reader, LOG_LEVEL_INF);
+
+#ifdef CONFIG_ADC
+
+#include <zephyr/drivers/adc.h>
 
 /* Reading interval from Kconfig (60s for low-power, 10s for development) */
 #define ADC_READING_INTERVAL_MS (CONFIG_ADC_READING_INTERVAL_SEC * 1000)
@@ -132,7 +136,10 @@ int adc_read_voltage_mv(int32_t *voltage_mv)
 		return err;
 	}
 
-	LOG_DBG("ADC: %d samples, avg raw=%d, voltage=%d mV",
+	/* VDDHDIV5 divides VDDH by 5, so multiply to get actual voltage */
+	*voltage_mv *= 5;
+
+	LOG_DBG("ADC: %d samples, avg raw=%d, VDDH=%d mV",
 		valid_samples, avg_raw, *voltage_mv);
 
 	return 0;
@@ -184,3 +191,34 @@ void adc_stop_periodic_reading(void)
 	k_work_cancel_delayable(&adc_work);
 	LOG_INF("ADC periodic reading stopped");
 }
+
+#else /* !CONFIG_ADC */
+
+/* Stub implementations when ADC is disabled */
+
+int adc_reader_init(void)
+{
+	LOG_INF("ADC disabled");
+	return 0;
+}
+
+int adc_read_raw(int16_t *raw_value)
+{
+	return -ENOTSUP;
+}
+
+int adc_read_voltage_mv(int32_t *voltage_mv)
+{
+	return -ENOTSUP;
+}
+
+int adc_start_periodic_reading(void)
+{
+	return 0;
+}
+
+void adc_stop_periodic_reading(void)
+{
+}
+
+#endif /* CONFIG_ADC */

@@ -1,0 +1,6 @@
+{
+    "idf.pythonInstallPath": "/usr/bin/python",
+    "nrf-connect.applications": [
+        "${workspaceFolder}/nordic/light_switch-lp"
+    ]
+}
