@@ -63,7 +63,7 @@
 
 /* Enable DC-DC converter for better power efficiency */
 &reg1 {
-	regulator-initial-mode = <2>; /* NRF5X_REG_MODE_DCDC */
+	regulator-initial-mode = <1>; /* NRF5X_REG_MODE_DCDC (0=LDO, 1=DCDC) */
 };
 
 /* Disable USB peripheral completely */

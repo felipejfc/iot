@@ -38,8 +38,16 @@ static void toggle_identify_led(zb_bufid_t bufid)
 {
 	static int blink_status;
 
+#ifdef CONFIG_DK_LIBRARY
 	led_power_set((++blink_status) % 2);
-	ZB_SCHEDULE_APP_ALARM(toggle_identify_led, bufid, ZB_MILLISECONDS_TO_BEACON_INTERVAL(100));
+	ZB_SCHEDULE_APP_ALARM(toggle_identify_led, bufid,
+			      ZB_MILLISECONDS_TO_BEACON_INTERVAL(100));
+#else
+	/* On non-DK targets `led_power_set()` controls external VCC and must not blink. */
+	ARG_UNUSED(blink_status);
+	led_power_set(false);
+	ARG_UNUSED(bufid);
+#endif
 }
 
 void identify_cb(zb_bufid_t bufid)
@@ -47,6 +55,11 @@ void identify_cb(zb_bufid_t bufid)
 	zb_ret_t zb_err_code;
 
 	if (bufid) {
+#ifndef CONFIG_DK_LIBRARY
+		/* No identify indication in low-power/non-DK builds. */
+		zb_buf_free(bufid);
+		return;
+#endif
 		/* Schedule a self-scheduling function that will toggle the LED. */
 		ZB_SCHEDULE_APP_CALLBACK(toggle_identify_led, bufid);
 	} else {
@@ -113,9 +126,8 @@ void zboss_signal_handler(zb_bufid_t bufid)
 	zb_zdo_app_signal_type_t sig = zb_get_app_signal(bufid, &sig_hndler);
 	zb_ret_t status = ZB_GET_APP_SIGNAL_STATUS(bufid);
 
-	/* In low-power mode, keep power LED off to save power */
-#ifdef CONFIG_PRINTK
-	/* Development mode - blink LED for network status */
+#if IS_ENABLED(CONFIG_DK_LIBRARY) && (IS_ENABLED(CONFIG_CONSOLE) || IS_ENABLED(CONFIG_LOG))
+	/* Development mode - indicate network status using LEDs. */
 	if (sig == ZB_BDB_SIGNAL_DEVICE_FIRST_START ||
 	    sig == ZB_BDB_SIGNAL_DEVICE_REBOOT ||
 	    sig == ZB_BDB_SIGNAL_STEERING) {
@@ -126,7 +138,7 @@ void zboss_signal_handler(zb_bufid_t bufid)
 		}
 	}
 #else
-	/* Low power mode - always keep LED off */
+	/* Low power mode - always keep VCC/LED off */
 	(void)sig;
 	(void)status;
 	led_power_set(false);
