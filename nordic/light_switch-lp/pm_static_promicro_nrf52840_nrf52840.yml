@@ -1,0 +1,40 @@
+# Partition layout for Pro Micro nRF52840 with MCUboot
+# Matches the board's default nrf52840_partition.dtsi layout
+#
+# Flash layout (nRF52840 has 1 MB flash = 0x100000):
+# 0x00000000 - 0x0000C000 (48 KB):  mcuboot
+# 0x0000C000 - 0x0007A000 (440 KB): mcuboot_primary/app (THE GAP - dynamic)
+# 0x0007A000 - 0x000E8000 (440 KB): mcuboot_secondary
+# 0x000E8000 - 0x000F0000 (32 KB):  zboss_nvram
+# 0x000F0000 - 0x000F1000 (4 KB):   zboss_product_config
+# 0x000F1000 - 0x00100000 (60 KB):  settings_storage
+
+# MCUboot bootloader at start (no MBR)
+mcuboot:
+  address: 0x0
+  region: flash_primary
+  size: 0xC000
+
+# Secondary slot for MCUboot OTA updates
+mcuboot_secondary:
+  address: 0x7A000
+  region: flash_primary
+  size: 0x6E000
+
+# Zigbee NVRAM storage
+zboss_nvram:
+  address: 0xE8000
+  region: flash_primary
+  size: 0x8000
+
+# Zigbee product configuration
+zboss_product_config:
+  address: 0xF0000
+  region: flash_primary
+  size: 0x1000
+
+# Settings storage (NVS)
+settings_storage:
+  address: 0xF1000
+  region: flash_primary
+  size: 0xF000

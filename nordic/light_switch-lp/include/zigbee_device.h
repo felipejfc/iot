@@ -76,4 +76,21 @@ void zigbee_device_update_voltage(int32_t voltage_mv);
  */
 int16_t zigbee_device_get_voltage_centivolts(void);
 
+/**
+ * @brief Set network joined status
+ *
+ * Called from signal handler when network join status changes.
+ * Voltage reports are only sent when joined.
+ *
+ * @param joined true if device has joined network, false otherwise
+ */
+void zigbee_device_set_network_joined(bool joined);
+
+/**
+ * @brief Check if device is joined to network
+ *
+ * @return true if device has joined network, false otherwise
+ */
+bool zigbee_device_is_network_joined(void);
+
 #endif /* ZIGBEE_DEVICE_H */

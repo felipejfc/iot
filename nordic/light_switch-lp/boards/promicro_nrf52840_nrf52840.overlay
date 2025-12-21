@@ -7,7 +7,7 @@
 #include <zephyr/dt-bindings/gpio/gpio.h>
 
 /*
- * Custom configuration for Pro Micro nRF52840
+ * Custom configuration for Pro Micro nRF52840 with MCUboot
  *
  * Relay control: P0.29 (active high)
  * Button: P0.02 (active low with pull-up)

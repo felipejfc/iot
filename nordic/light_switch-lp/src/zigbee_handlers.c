@@ -138,8 +138,24 @@ void zboss_signal_handler(zb_bufid_t bufid)
 
 	switch (sig) {
 	case ZB_BDB_SIGNAL_DEVICE_REBOOT:
+		/* Device rebooted - check if we're still connected */
+		if (status == RET_OK) {
+			zigbee_device_set_network_joined(true);
+		}
+		ZB_ERROR_CHECK(zigbee_default_signal_handler(bufid));
+		break;
 	case ZB_BDB_SIGNAL_STEERING:
+		/* Network steering completed */
+		if (status == RET_OK) {
+			zigbee_device_set_network_joined(true);
+		}
+		ZB_ERROR_CHECK(zigbee_default_signal_handler(bufid));
+		break;
 	case ZB_ZDO_SIGNAL_LEAVE:
+		/* Left network */
+		zigbee_device_set_network_joined(false);
+		ZB_ERROR_CHECK(zigbee_default_signal_handler(bufid));
+		break;
 	default:
 		ZB_ERROR_CHECK(zigbee_default_signal_handler(bufid));
 		break;

@@ -61,6 +61,9 @@ static struct relay_context relay_ctx;
 static struct zb_relay_ctx relay_dev_ctx;
 static struct zb_voltage_ctx voltage_dev_ctx;
 
+/* Network join status - only send reports when joined */
+static bool network_joined = false;
+
 /* Forward declaration */
 static void zcl_device_cb(zb_bufid_t bufid);
 static zb_uint8_t zcl_on_off_handler(zb_bufid_t bufid);
@@ -336,15 +339,15 @@ void zigbee_device_init(void)
 
 	/* Basic cluster attributes data for relay endpoint */
 	relay_dev_ctx.basic_attr.zcl_version = ZB_ZCL_VERSION;
-	relay_dev_ctx.basic_attr.power_source = ZB_ZCL_BASIC_POWER_SOURCE_UNKNOWN;
+	relay_dev_ctx.basic_attr.power_source = ZB_ZCL_BASIC_POWER_SOURCE_BATTERY;
 
 	ZB_ZCL_SET_STRING_VAL(relay_dev_ctx.manufacturer_name,
-			      (zb_uint8_t *)"Nordic",
-			      ZB_ZCL_STRING_CONST_SIZE("Nordic"));
+			      (zb_uint8_t *)"FCApps",
+			      ZB_ZCL_STRING_CONST_SIZE("FCApps"));
 
 	ZB_ZCL_SET_STRING_VAL(relay_dev_ctx.model_id,
-			      (zb_uint8_t *)"Relay Switch",
-			      ZB_ZCL_STRING_CONST_SIZE("Relay Switch"));
+			      (zb_uint8_t *)"Smart Relay v1",
+			      ZB_ZCL_STRING_CONST_SIZE("Smart Relay v1"));
 
 	/* On/Off cluster attributes for relay - sync with relay state. */
 	relay_dev_ctx.on_off_attr.on_off = relay_ctx.relay_state ? ZB_TRUE : ZB_FALSE;
@@ -352,17 +355,17 @@ void zigbee_device_init(void)
 	/* Identify cluster attributes data for relay. */
 	relay_dev_ctx.identify_attr.identify_time = ZB_ZCL_IDENTIFY_IDENTIFY_TIME_DEFAULT_VALUE;
 
-	/* Basic cluster attributes data for voltage sensor endpoint */
+	/* Basic cluster attributes data for voltage sensor endpoint - same as relay */
 	voltage_dev_ctx.basic_attr.zcl_version = ZB_ZCL_VERSION;
-	voltage_dev_ctx.basic_attr.power_source = ZB_ZCL_BASIC_POWER_SOURCE_UNKNOWN;
+	voltage_dev_ctx.basic_attr.power_source = ZB_ZCL_BASIC_POWER_SOURCE_BATTERY;
 
 	ZB_ZCL_SET_STRING_VAL(voltage_dev_ctx.manufacturer_name,
-			      (zb_uint8_t *)"Nordic",
-			      ZB_ZCL_STRING_CONST_SIZE("Nordic"));
+			      (zb_uint8_t *)"FCApps",
+			      ZB_ZCL_STRING_CONST_SIZE("FCApps"));
 
 	ZB_ZCL_SET_STRING_VAL(voltage_dev_ctx.model_id,
-			      (zb_uint8_t *)"Voltage Sensor",
-			      ZB_ZCL_STRING_CONST_SIZE("Voltage Sensor"));
+			      (zb_uint8_t *)"Smart Relay v1",
+			      ZB_ZCL_STRING_CONST_SIZE("Smart Relay v1"));
 
 	/* Analog Input cluster attributes - initial voltage 0 */
 	voltage_present_value = 0;
@@ -532,16 +535,31 @@ void zigbee_device_update_voltage(int32_t voltage_mv)
 	LOG_DBG("Voltage: %d.%02d V (%d cV, diff=%d cV)",
 		voltage_mv / 1000, (voltage_mv % 1000) / 10, voltage_present_value, diff);
 
-	/* Only send report if change exceeds threshold (50mV = 5 cV) */
+	/* Only send report if change exceeds threshold (50mV = 5 cV) and network is joined */
 	if (diff >= VOLTAGE_REPORT_THRESHOLD_CV) {
 		voltage_last_reported = voltage_present_value;
-		ZB_SCHEDULE_APP_CALLBACK(voltage_report_cb, 0);
-		LOG_INF("Voltage changed: %d.%02d V (%d cV)",
-			voltage_mv / 1000, (voltage_mv % 1000) / 10, voltage_present_value);
+		if (network_joined) {
+			ZB_SCHEDULE_APP_CALLBACK(voltage_report_cb, 0);
+			LOG_INF("Voltage changed: %d.%02d V (%d cV)",
+				voltage_mv / 1000, (voltage_mv % 1000) / 10, voltage_present_value);
+		} else {
+			LOG_DBG("Voltage change detected but network not joined, skipping report");
+		}
 	}
 }
 
 int16_t zigbee_device_get_voltage_centivolts(void)
 {
 	return voltage_present_value;
+}
+
+void zigbee_device_set_network_joined(bool joined)
+{
+	network_joined = joined;
+	LOG_INF("Network joined status: %s", joined ? "true" : "false");
+}
+
+bool zigbee_device_is_network_joined(void)
+{
+	return network_joined;
 }
