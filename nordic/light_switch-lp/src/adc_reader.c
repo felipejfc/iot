@@ -156,8 +156,8 @@ static void adc_work_handler(struct k_work *work)
 
 	err = adc_read_voltage_mv(&voltage_mv);
 	if (err == 0) {
-		/* Update Zigbee attribute with new voltage reading */
-		zigbee_device_update_voltage(voltage_mv);
+		/* Update Zigbee battery attribute with new voltage reading */
+		zigbee_device_update_battery(voltage_mv);
 	} else {
 		LOG_WRN("Failed to read ADC voltage: %d", err);
 	}

@@ -16,6 +16,7 @@
 #include <zboss_api_addons.h>
 #include <zigbee/zigbee_app_utils.h>
 #include <zigbee/zigbee_error_handler.h>
+#include <zcl/zb_zcl_power_config.h>
 
 #include "zigbee_device.h"
 #include "zigbee_handlers.h"
@@ -41,25 +42,18 @@ struct zb_relay_ctx {
 	zb_char_t model_id[17];
 };
 
-/* Voltage sensor endpoint device context */
-struct zb_voltage_ctx {
-	zb_zcl_basic_attrs_t basic_attr;
-	zb_zcl_identify_attrs_t identify_attr;
-	zb_char_t manufacturer_name[17];
-	zb_char_t model_id[17];
-};
+/* Power Configuration cluster attributes for battery reporting */
+static zb_uint16_t battery_voltage;           /* Units of 10mV (e.g., 406 = 4.06V) */
+static zb_uint8_t battery_percentage;         /* Half-percent units (200 = 100%) */
+static zb_uint16_t battery_voltage_last_reported;  /* For threshold reporting */
 
-/* Analog Input cluster attribute values - separate statics for compile-time initialization */
-static zb_int16_t voltage_present_value;      /* Voltage in centivolts (100 = 1.00V) */
-static zb_int16_t voltage_last_reported;      /* Last reported value for threshold check */
-static zb_uint8_t voltage_status_flags;        /* Status flags */
-
-/* Minimum voltage change (in centivolts) required to trigger a report */
-#define VOLTAGE_REPORT_THRESHOLD_CV  5  /* 50mV = 5 centivolts */
+/* Li-ion battery voltage range for percentage calculation */
+#define BATTERY_MIN_MV  3000  /* 3.0V = 0% */
+#define BATTERY_MAX_MV  4200  /* 4.2V = 100% */
+#define BATTERY_REPORT_THRESHOLD  5  /* Report when voltage changes by 50mV (5 x 10mV units) */
 
 static struct relay_context relay_ctx;
 static struct zb_relay_ctx relay_dev_ctx;
-static struct zb_voltage_ctx voltage_dev_ctx;
 
 /* Network join status - only send reports when joined */
 static bool network_joined = false;
@@ -89,6 +83,40 @@ ZB_ZCL_DECLARE_IDENTIFY_SERVER_ATTRIB_LIST(
 	relay_identify_server_attr_list,
 	&relay_dev_ctx.identify_attr.identify_time);
 
+/* Power Configuration cluster attribute list - using custom U16 for voltage (10mV units) */
+static zb_uint16_t power_config_cluster_revision = ZB_ZCL_POWER_CONFIG_CLUSTER_REVISION_DEFAULT;
+
+static zb_zcl_attr_t relay_power_config_attr_list[] = {
+	{
+		ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_ID,
+		ZB_ZCL_ATTR_TYPE_U16,  /* Custom: U16 in 10mV units instead of U8 in 100mV */
+		ZB_ZCL_ATTR_ACCESS_READ_ONLY | ZB_ZCL_ATTR_ACCESS_REPORTING,
+		ZB_ZCL_NON_MANUFACTURER_SPECIFIC,
+		(void *)&battery_voltage
+	},
+	{
+		ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID,
+		ZB_ZCL_ATTR_TYPE_U8,
+		ZB_ZCL_ATTR_ACCESS_READ_ONLY | ZB_ZCL_ATTR_ACCESS_REPORTING,
+		ZB_ZCL_NON_MANUFACTURER_SPECIFIC,
+		(void *)&battery_percentage
+	},
+	{
+		ZB_ZCL_ATTR_GLOBAL_CLUSTER_REVISION_ID,
+		ZB_ZCL_ATTR_TYPE_U16,
+		ZB_ZCL_ATTR_ACCESS_READ_ONLY,
+		ZB_ZCL_NON_MANUFACTURER_SPECIFIC,
+		(void *)&power_config_cluster_revision
+	},
+	{
+		ZB_ZCL_NULL_ID,
+		0,
+		0,
+		0,
+		NULL
+	}
+};
+
 /* Declare attribute list for On/Off cluster (server) for relay endpoint */
 ZB_ZCL_DECLARE_ON_OFF_ATTRIB_LIST(
 	relay_on_off_server_attr_list,
@@ -117,24 +145,32 @@ zb_zcl_cluster_desc_t relay_switch_clusters[] =
 		(relay_on_off_server_attr_list),
 		ZB_ZCL_CLUSTER_SERVER_ROLE,
 		ZB_ZCL_MANUF_CODE_INVALID
+	),
+	ZB_ZCL_CLUSTER_DESC(
+		ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
+		3,  /* 3 attributes: voltage, percentage, cluster revision */
+		(relay_power_config_attr_list),
+		ZB_ZCL_CLUSTER_SERVER_ROLE,
+		ZB_ZCL_MANUF_CODE_INVALID
 	)
 };
 
-/* Declare simple descriptor type for relay endpoint (3 server clusters, 0 client clusters) */
-ZB_DECLARE_SIMPLE_DESC(3, 0);
+/* Declare simple descriptor type for relay endpoint (4 server clusters, 0 client clusters) */
+ZB_DECLARE_SIMPLE_DESC(4, 0);
 
-ZB_AF_SIMPLE_DESC_TYPE(3, 0) simple_desc_relay_switch_ep = {
+ZB_AF_SIMPLE_DESC_TYPE(4, 0) simple_desc_relay_switch_ep = {
 	RELAY_SWITCH_ENDPOINT,                /* Endpoint ID */
 	ZB_AF_HA_PROFILE_ID,                  /* Application profile identifier */
 	ZB_HA_ON_OFF_OUTPUT_DEVICE_ID,        /* Device ID - On/Off Output */
 	0,                                     /* Device version */
 	0,                                     /* Reserved */
-	3,                                     /* Number of input (server) clusters */
+	4,                                     /* Number of input (server) clusters */
 	0,                                     /* Number of output (client) clusters */
 	{
 		ZB_ZCL_CLUSTER_ID_BASIC,           /* Server: Basic */
 		ZB_ZCL_CLUSTER_ID_IDENTIFY,        /* Server: Identify */
 		ZB_ZCL_CLUSTER_ID_ON_OFF,          /* Server: On/Off */
+		ZB_ZCL_CLUSTER_ID_POWER_CONFIG,    /* Server: Power Configuration */
 	}
 };
 
@@ -148,126 +184,22 @@ ZB_AF_DECLARE_ENDPOINT_DESC(
 	ZB_ZCL_ARRAY_SIZE(relay_switch_clusters, zb_zcl_cluster_desc_t),
 	relay_switch_clusters,
 	(zb_af_simple_desc_1_1_t *)&simple_desc_relay_switch_ep,
-	0, NULL, /* No reporting ctx */
-	0, NULL  /* No CVC ctx */
-);
-
-/* =============================================================================
- * VOLTAGE SENSOR ENDPOINT (EP 3) - Analog Input for voltage measurement
- * =============================================================================
- * Uses Analog Input cluster (0x000C) for zigbee2mqtt compatibility.
- * Attribute reads are handled dynamically via ZCL callback.
- */
-
-/* Analog Input cluster ID and attributes */
-#define ZB_ZCL_CLUSTER_ID_ANALOG_INPUT              0x000C
-#define ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID   0x0055
-#define ZB_ZCL_ATTR_ANALOG_INPUT_OUT_OF_SERVICE_ID  0x0051
-#define ZB_ZCL_ATTR_ANALOG_INPUT_STATUS_FLAGS_ID    0x006F
-
-/* Declare attribute list for Basic cluster (server) for voltage endpoint */
-#define ZB_ZCL_BASIC_VOLTAGE_ATTRIB_LIST                                         \
-	ZB_ZCL_START_DECLARE_ATTRIB_LIST_CLUSTER_REVISION(voltage_basic_attr_list, ZB_ZCL_BASIC) \
-	ZB_ZCL_SET_ATTR_DESC(ZB_ZCL_ATTR_BASIC_ZCL_VERSION_ID, (&voltage_dev_ctx.basic_attr.zcl_version)) \
-	ZB_ZCL_SET_ATTR_DESC(ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, (voltage_dev_ctx.manufacturer_name)) \
-	ZB_ZCL_SET_ATTR_DESC(ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, (voltage_dev_ctx.model_id)) \
-	ZB_ZCL_SET_ATTR_DESC(ZB_ZCL_ATTR_BASIC_POWER_SOURCE_ID, (&voltage_dev_ctx.basic_attr.power_source)) \
-	ZB_ZCL_FINISH_DECLARE_ATTRIB_LIST
-
-ZB_ZCL_BASIC_VOLTAGE_ATTRIB_LIST;
-
-/* Declare attribute list for Identify cluster (server) for voltage endpoint */
-ZB_ZCL_DECLARE_IDENTIFY_SERVER_ATTRIB_LIST(
-	voltage_identify_server_attr_list,
-	&voltage_dev_ctx.identify_attr.identify_time);
-
-/* Analog Input attribute list - pointers initialized at runtime
- * Note: ZBOSS attribute lists need the data_p field set at runtime
- * due to position-independent code requirements
- */
-static zb_zcl_attr_t voltage_analog_input_attr_list[3];  /* presentValue, clusterRevision, terminator */
-
-/* Number of actual attributes (not counting terminator) */
-#define VOLTAGE_ANALOG_INPUT_ATTR_COUNT 2
-
-/* Cluster revision for analog input */
-static zb_uint16_t voltage_analog_input_cluster_revision = 1;
-
-/* Declare cluster list for Voltage sensor endpoint */
-zb_zcl_cluster_desc_t voltage_sensor_clusters[] =
-{
-	ZB_ZCL_CLUSTER_DESC(
-		ZB_ZCL_CLUSTER_ID_BASIC,
-		ZB_ZCL_ARRAY_SIZE(voltage_basic_attr_list, zb_zcl_attr_t),
-		(voltage_basic_attr_list),
-		ZB_ZCL_CLUSTER_SERVER_ROLE,
-		ZB_ZCL_MANUF_CODE_INVALID
-	),
-	ZB_ZCL_CLUSTER_DESC(
-		ZB_ZCL_CLUSTER_ID_IDENTIFY,
-		ZB_ZCL_ARRAY_SIZE(voltage_identify_server_attr_list, zb_zcl_attr_t),
-		(voltage_identify_server_attr_list),
-		ZB_ZCL_CLUSTER_SERVER_ROLE,
-		ZB_ZCL_MANUF_CODE_INVALID
-	),
-	/* Analog Input cluster with runtime-initialized attributes */
-	{
-		ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-		VOLTAGE_ANALOG_INPUT_ATTR_COUNT,
-		voltage_analog_input_attr_list,
-		ZB_ZCL_CLUSTER_SERVER_ROLE,
-		ZB_ZCL_MANUF_CODE_INVALID,
-		NULL
-	}
-};
-
-/* Simple descriptor for voltage endpoint (3 server clusters, 0 client clusters) */
-/* Note: ZB_DECLARE_SIMPLE_DESC(3, 0) already declared for relay endpoint */
-ZB_AF_SIMPLE_DESC_TYPE(3, 0) simple_desc_voltage_sensor_ep = {
-	VOLTAGE_SENSOR_ENDPOINT,              /* Endpoint ID */
-	ZB_AF_HA_PROFILE_ID,                  /* Application profile identifier */
-	ZB_HA_SIMPLE_SENSOR_DEVICE_ID,        /* Device ID - Simple Sensor */
-	0,                                     /* Device version */
-	0,                                     /* Reserved */
-	3,                                     /* Number of input (server) clusters */
-	0,                                     /* Number of output (client) clusters */
-	{
-		ZB_ZCL_CLUSTER_ID_BASIC,           /* Server: Basic */
-		ZB_ZCL_CLUSTER_ID_IDENTIFY,        /* Server: Identify */
-		ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,    /* Server: Analog Input (0x000C) */
-	}
-};
-
-/* Declare voltage sensor endpoint descriptor */
-ZB_AF_DECLARE_ENDPOINT_DESC(
-	voltage_sensor_ep,
-	VOLTAGE_SENSOR_ENDPOINT,
-	ZB_AF_HA_PROFILE_ID,
-	0,
-	NULL,
-	ZB_ZCL_ARRAY_SIZE(voltage_sensor_clusters, zb_zcl_cluster_desc_t),
-	voltage_sensor_clusters,
-	(zb_af_simple_desc_1_1_t *)&simple_desc_voltage_sensor_ep,
-	0, NULL, /* No reporting ctx */
+	0, NULL, /* No reporting ctx - battery reports sent manually */
 	0, NULL  /* No CVC ctx */
 );
 
 /* Declare application's device context (list of registered endpoints) */
 #ifndef CONFIG_ZIGBEE_FOTA
-ZBOSS_DECLARE_DEVICE_CTX_2_EP(device_ctx, relay_switch_ep, voltage_sensor_ep);
+ZBOSS_DECLARE_DEVICE_CTX_1_EP(device_ctx, relay_switch_ep);
 #else
   #if RELAY_SWITCH_ENDPOINT == CONFIG_ZIGBEE_FOTA_ENDPOINT
     #error "Relay switch and Zigbee OTA endpoints should be different."
   #endif
-  #if VOLTAGE_SENSOR_ENDPOINT == CONFIG_ZIGBEE_FOTA_ENDPOINT
-    #error "Voltage sensor and Zigbee OTA endpoints should be different."
-  #endif
 
 extern zb_af_endpoint_desc_t zigbee_fota_client_ep;
-ZBOSS_DECLARE_DEVICE_CTX_3_EP(device_ctx,
+ZBOSS_DECLARE_DEVICE_CTX_2_EP(device_ctx,
 			      zigbee_fota_client_ep,
-			      relay_switch_ep,
-			      voltage_sensor_ep);
+			      relay_switch_ep);
 #endif /* CONFIG_ZIGBEE_FOTA */
 
 /**@brief Callback for handling ZCL On/Off commands. */
@@ -355,49 +287,12 @@ void zigbee_device_init(void)
 	/* Identify cluster attributes data for relay. */
 	relay_dev_ctx.identify_attr.identify_time = ZB_ZCL_IDENTIFY_IDENTIFY_TIME_DEFAULT_VALUE;
 
-	/* Basic cluster attributes data for voltage sensor endpoint - same as relay */
-	voltage_dev_ctx.basic_attr.zcl_version = ZB_ZCL_VERSION;
-	voltage_dev_ctx.basic_attr.power_source = ZB_ZCL_BASIC_POWER_SOURCE_BATTERY;
+	/* Power Configuration cluster attributes - initial battery state unknown */
+	battery_voltage = ZB_ZCL_POWER_CONFIG_BATTERY_VOLTAGE_INVALID;
+	battery_percentage = ZB_ZCL_POWER_CONFIG_BATTERY_REMAINING_UNKNOWN;
+	battery_voltage_last_reported = 0;
 
-	ZB_ZCL_SET_STRING_VAL(voltage_dev_ctx.manufacturer_name,
-			      (zb_uint8_t *)"FCApps",
-			      ZB_ZCL_STRING_CONST_SIZE("FCApps"));
-
-	ZB_ZCL_SET_STRING_VAL(voltage_dev_ctx.model_id,
-			      (zb_uint8_t *)"Smart Relay v1",
-			      ZB_ZCL_STRING_CONST_SIZE("Smart Relay v1"));
-
-	/* Analog Input cluster attributes - initial voltage 0 */
-	voltage_present_value = 0;
-	voltage_last_reported = 0;  /* First reading will trigger report if >= 50mV */
-	voltage_status_flags = 0;
-
-	/* Runtime initialization of Analog Input attribute list */
-	/* Attribute 0: presentValue (0x0055) */
-	voltage_analog_input_attr_list[0].id = ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID;
-	voltage_analog_input_attr_list[0].type = ZB_ZCL_ATTR_TYPE_S16;
-	voltage_analog_input_attr_list[0].access = ZB_ZCL_ATTR_ACCESS_READ_ONLY;
-	voltage_analog_input_attr_list[0].manuf_code = ZB_ZCL_NON_MANUFACTURER_SPECIFIC;
-	voltage_analog_input_attr_list[0].data_p = &voltage_present_value;
-
-	/* Attribute 1: clusterRevision (0xFFFD) */
-	voltage_analog_input_attr_list[1].id = ZB_ZCL_ATTR_GLOBAL_CLUSTER_REVISION_ID;
-	voltage_analog_input_attr_list[1].type = ZB_ZCL_ATTR_TYPE_U16;
-	voltage_analog_input_attr_list[1].access = ZB_ZCL_ATTR_ACCESS_READ_ONLY;
-	voltage_analog_input_attr_list[1].manuf_code = ZB_ZCL_NON_MANUFACTURER_SPECIFIC;
-	voltage_analog_input_attr_list[1].data_p = &voltage_analog_input_cluster_revision;
-
-	/* Terminator */
-	voltage_analog_input_attr_list[2].id = ZB_ZCL_NULL_ID;
-	voltage_analog_input_attr_list[2].type = 0;
-	voltage_analog_input_attr_list[2].access = 0;
-	voltage_analog_input_attr_list[2].manuf_code = ZB_ZCL_NON_MANUFACTURER_SPECIFIC;
-	voltage_analog_input_attr_list[2].data_p = NULL;
-
-	LOG_INF("Analog Input attributes initialized");
-
-	/* Identify cluster attributes data for voltage sensor. */
-	voltage_dev_ctx.identify_attr.identify_time = ZB_ZCL_IDENTIFY_IDENTIFY_TIME_DEFAULT_VALUE;
+	LOG_INF("Power Configuration attributes initialized");
 }
 
 void zigbee_device_register(void)
@@ -408,12 +303,10 @@ void zigbee_device_register(void)
 	/* Register device context (endpoints) */
 	ZB_AF_REGISTER_DEVICE_CTX(&device_ctx);
 
-	LOG_INF("Registered Zigbee endpoints: EP%d (Relay), EP%d (Voltage)",
-		RELAY_SWITCH_ENDPOINT, VOLTAGE_SENSOR_ENDPOINT);
+	LOG_INF("Registered Zigbee endpoint: EP%d (Relay)", RELAY_SWITCH_ENDPOINT);
 
 	/* Register handlers to identify notifications */
 	ZB_AF_SET_IDENTIFY_NOTIFICATION_HANDLER(RELAY_SWITCH_ENDPOINT, identify_cb);
-	ZB_AF_SET_IDENTIFY_NOTIFICATION_HANDLER(VOLTAGE_SENSOR_ENDPOINT, identify_cb);
 #ifdef CONFIG_ZIGBEE_FOTA
 	ZB_AF_SET_IDENTIFY_NOTIFICATION_HANDLER(CONFIG_ZIGBEE_FOTA_ENDPOINT, identify_cb);
 #endif
@@ -451,21 +344,27 @@ bool zigbee_device_get_relay_state(void)
 	return relay_ctx.relay_state;
 }
 
-/* Send voltage attribute report to coordinator (address 0x0000) */
-static void send_voltage_report(zb_bufid_t bufid)
+void zigbee_device_set_network_joined(bool joined)
+{
+	network_joined = joined;
+	LOG_INF("Network joined status: %s", joined ? "true" : "false");
+}
+
+bool zigbee_device_is_network_joined(void)
+{
+	return network_joined;
+}
+
+/* Send battery attribute report to coordinator */
+static void send_battery_report(zb_bufid_t bufid)
 {
 	zb_uint8_t *cmd_ptr;
 	zb_uint16_t dst_addr = 0x0000;  /* Coordinator address */
-	zb_int16_t value = voltage_present_value;
 
 	/* Start building the ZCL packet */
 	cmd_ptr = ZB_ZCL_START_PACKET(bufid);
 
-	/* Build frame control for Report Attributes command:
-	 * - Global command (not cluster-specific)
-	 * - Server to client direction
-	 * - Disable default response
-	 */
+	/* Build frame control for Report Attributes command */
 	ZB_ZCL_CONSTRUCT_GENERAL_COMMAND_REQ_FRAME_CONTROL_A(
 		cmd_ptr,
 		ZB_ZCL_FRAME_DIRECTION_TO_CLI,
@@ -478,14 +377,15 @@ static void send_voltage_report(zb_bufid_t bufid)
 		ZB_ZCL_GET_SEQ_NUM(),
 		ZB_ZCL_CMD_REPORT_ATTRIB);
 
-	/* Add attribute report record:
-	 * - Attribute ID (2 bytes LE)
-	 * - Attribute type (1 byte)
-	 * - Attribute value (size depends on type)
-	 */
-	ZB_ZCL_PACKET_PUT_DATA16_VAL(cmd_ptr, ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID);
-	ZB_ZCL_PACKET_PUT_DATA8(cmd_ptr, ZB_ZCL_ATTR_TYPE_S16);
-	ZB_ZCL_PACKET_PUT_DATA16_VAL(cmd_ptr, value);
+	/* Add battery voltage attribute report (0x0020) - U16 in 10mV units */
+	ZB_ZCL_PACKET_PUT_DATA16_VAL(cmd_ptr, ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_ID);
+	ZB_ZCL_PACKET_PUT_DATA8(cmd_ptr, ZB_ZCL_ATTR_TYPE_U16);
+	ZB_ZCL_PACKET_PUT_DATA16_VAL(cmd_ptr, battery_voltage);
+
+	/* Add battery percentage attribute report (0x0021) */
+	ZB_ZCL_PACKET_PUT_DATA16_VAL(cmd_ptr, ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID);
+	ZB_ZCL_PACKET_PUT_DATA8(cmd_ptr, ZB_ZCL_ATTR_TYPE_U8);
+	ZB_ZCL_PACKET_PUT_DATA8(cmd_ptr, battery_percentage);
 
 	/* Finish and send the packet */
 	ZB_ZCL_FINISH_N_SEND_PACKET(
@@ -494,13 +394,13 @@ static void send_voltage_report(zb_bufid_t bufid)
 		dst_addr,
 		ZB_APS_ADDR_MODE_16_ENDP_PRESENT,
 		1,  /* Destination endpoint (coordinator) */
-		VOLTAGE_SENSOR_ENDPOINT,
+		RELAY_SWITCH_ENDPOINT,
 		ZB_AF_HA_PROFILE_ID,
-		ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
+		ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
 		NULL);
 }
 
-static void voltage_report_cb(zb_uint8_t param)
+static void battery_report_cb(zb_uint8_t param)
 {
 	zb_bufid_t bufid;
 
@@ -511,55 +411,56 @@ static void voltage_report_cb(zb_uint8_t param)
 	}
 
 	if (!bufid) {
-		LOG_WRN("No buffer for voltage report");
+		LOG_WRN("No buffer for battery report");
 		return;
 	}
 
-	send_voltage_report(bufid);
-	LOG_INF("Voltage report sent: %d cV", voltage_present_value);
+	send_battery_report(bufid);
+	LOG_INF("Battery report sent: %d.%02d V, %d%%",
+		battery_voltage / 100, battery_voltage % 100, battery_percentage / 2);
 }
 
-void zigbee_device_update_voltage(int32_t voltage_mv)
+void zigbee_device_update_battery(int32_t voltage_mv)
 {
-	/* Store voltage in centivolts (e.g., 330 = 3.30V) for better precision */
-	zb_int16_t new_value = (zb_int16_t)(voltage_mv / 10);
-	zb_int16_t diff = new_value - voltage_last_reported;
+	/* Convert to 10mV units (e.g., 4060mV -> 406) */
+	zb_uint16_t new_voltage = (zb_uint16_t)(voltage_mv / 10);
 
-	/* Calculate absolute difference */
+	/* Calculate percentage: Li-ion 3.0V-4.2V range */
+	int32_t pct;
+	if (voltage_mv <= BATTERY_MIN_MV) {
+		pct = 0;
+	} else if (voltage_mv >= BATTERY_MAX_MV) {
+		pct = 100;
+	} else {
+		pct = ((voltage_mv - BATTERY_MIN_MV) * 100) / (BATTERY_MAX_MV - BATTERY_MIN_MV);
+	}
+
+	/* Convert to half-percent units (200 = 100%) */
+	zb_uint8_t new_percentage = (zb_uint8_t)(pct * 2);
+
+	/* Calculate voltage difference for threshold check */
+	zb_int16_t diff = (zb_int16_t)(new_voltage - battery_voltage_last_reported);
 	if (diff < 0) {
 		diff = -diff;
 	}
 
-	voltage_present_value = new_value;
+	/* Update attributes */
+	battery_voltage = new_voltage;
+	battery_percentage = new_percentage;
 
-	LOG_DBG("Voltage: %d.%02d V (%d cV, diff=%d cV)",
-		voltage_mv / 1000, (voltage_mv % 1000) / 10, voltage_present_value, diff);
+	LOG_DBG("Battery: %d.%02d V (%d units), %d%% (diff=%d)",
+		voltage_mv / 1000, (voltage_mv % 1000) / 10,
+		battery_voltage, pct, diff);
 
-	/* Only send report if change exceeds threshold (50mV = 5 cV) and network is joined */
-	if (diff >= VOLTAGE_REPORT_THRESHOLD_CV) {
-		voltage_last_reported = voltage_present_value;
+	/* Send report if change exceeds threshold and network is joined */
+	if (diff >= BATTERY_REPORT_THRESHOLD) {
+		battery_voltage_last_reported = battery_voltage;
 		if (network_joined) {
-			ZB_SCHEDULE_APP_CALLBACK(voltage_report_cb, 0);
-			LOG_INF("Voltage changed: %d.%02d V (%d cV)",
-				voltage_mv / 1000, (voltage_mv % 1000) / 10, voltage_present_value);
+			ZB_SCHEDULE_APP_CALLBACK(battery_report_cb, 0);
+			LOG_INF("Battery changed: %d.%02d V, %d%%",
+				voltage_mv / 1000, (voltage_mv % 1000) / 10, pct);
 		} else {
-			LOG_DBG("Voltage change detected but network not joined, skipping report");
+			LOG_DBG("Battery change detected but network not joined, skipping report");
 		}
 	}
-}
-
-int16_t zigbee_device_get_voltage_centivolts(void)
-{
-	return voltage_present_value;
-}
-
-void zigbee_device_set_network_joined(bool joined)
-{
-	network_joined = joined;
-	LOG_INF("Network joined status: %s", joined ? "true" : "false");
-}
-
-bool zigbee_device_is_network_joined(void)
-{
-	return network_joined;
 }

@@ -16,7 +16,6 @@
 
 /* Source endpoint for Zigbee device */
 #define RELAY_SWITCH_ENDPOINT      1
-#define VOLTAGE_SENSOR_ENDPOINT    2
 
 /* Do not erase NVRAM to save the network parameters after device reboot or
  * power-off. NOTE: If this option is set to ZB_TRUE then do full device erase
@@ -60,27 +59,24 @@ bool zigbee_device_toggle_relay(void);
 bool zigbee_device_get_relay_state(void);
 
 /**
- * @brief Update voltage sensor reading and Zigbee attribute
+ * @brief Update battery level and report to Zigbee2MQTT
  *
- * Updates the Analog Input cluster present_value attribute with the
- * measured voltage. Value is stored in centivolts (e.g., 330 = 3.30V).
+ * Updates the Power Configuration cluster attributes:
+ * - Battery voltage (0x0020) in units of 100mV
+ * - Battery percentage (0x0021) in half-percent units (200 = 100%)
  *
- * @param voltage_mv Voltage in millivolts
+ * Sends attribute report if voltage change exceeds threshold.
+ * Uses Li-ion battery curve: 3.0V = 0%, 4.2V = 100%
+ *
+ * @param voltage_mv Battery voltage in millivolts
  */
-void zigbee_device_update_voltage(int32_t voltage_mv);
-
-/**
- * @brief Get current voltage reading in centivolts
- *
- * @return Voltage in centivolts (e.g., 330 = 3.30V)
- */
-int16_t zigbee_device_get_voltage_centivolts(void);
+void zigbee_device_update_battery(int32_t voltage_mv);
 
 /**
  * @brief Set network joined status
  *
  * Called from signal handler when network join status changes.
- * Voltage reports are only sent when joined.
+ * Battery reports are only sent when joined.
  *
  * @param joined true if device has joined network, false otherwise
  */
